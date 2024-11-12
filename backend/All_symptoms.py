@@ -9,8 +9,7 @@ def get_all_symptoms():
     sparql.setQuery("""
         SELECT DISTINCT ?symptom
         WHERE {
-            ?disease dbo:symptom ?symptom .
-            FILTER (STRSTARTS(STR(?symptom), "http://dbpedia.org/resource/"))
+            ?disease dbo:symptom ?symptom.
         }
     """)
     sparql.setReturnFormat(JSON)
@@ -26,7 +25,7 @@ def get_all_symptoms():
 
 # Beispielnutzung
 all_symptoms = get_all_symptoms()
-print("Liste der verfügbaren Symptome:")
+print(f"Liste der verfügbaren Symptome:")
 for symptom in all_symptoms:
     print(symptom)
 
