@@ -15,7 +15,7 @@ def get_diseases_for_symptoms(symptoms_list):
     sparql = SPARQLWrapper("https://dbpedia.org/sparql")
 
     # Create conditions for the symptoms in the SPARQL query
-    symptom_conditions = "\n".join([f"?disease dbo:symptom dbr:{symptom} ." for symptom in symptoms_list])
+    symptom_conditions = "\n".join([f"?disease dbo:symptom+ {symptom} ." for symptom in symptoms_list])
 
     # SPARQL query to find diseases based on the symptoms
     query = f"""
@@ -68,7 +68,7 @@ def get_disease_symptom_pairs(disease_list):
     SELECT DISTINCT ?disease ?label ?symptom
     WHERE {{
         VALUES ?disease {{ {disease_conditions} }}
-        ?disease dbo:symptom ?symptom.
+        ?disease dbo:symptom+ ?symptom.
         ?disease rdfs:label ?label.
         FILTER langMatches(lang(?label), "en")
     }}
@@ -138,9 +138,10 @@ def remove_and_check_symptoms(disease_symptom_pairs, no_symptom_list):
     
     # Gehe jedes Krankheit-Symptom-Paar durch und filtere Symptome
     for disease, symptoms in disease_symptom_pairs.items():
-        filtered_symptoms = [symptom for symptom in symptoms if symptom.split(":")[-1] not in no_symptom_list]
+        filtered_symptoms = [symptom for symptom in symptoms if symptom not in no_symptom_list]
         filtered_diseases[disease] = filtered_symptoms
-    
+
+
     # Überprüfen auf doppelte Krankheiten basierend auf den Symptomen
     symptom_sets = defaultdict(list)
     

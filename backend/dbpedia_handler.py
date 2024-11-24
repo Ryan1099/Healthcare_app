@@ -49,7 +49,7 @@ def get_all_possible_symptoms(input_symptoms):
                     WHERE {{
                         ?disease dbo:symptom ?inputSymptom.
                         VALUES ?inputSymptom {{
-                            {" ".join(f"dbr:{symptom}" for symptom in input_symptoms)}
+                            {" ".join(f"{symptom}" for symptom in input_symptoms)}
                         }}
                     }}
                     GROUP BY ?disease
@@ -127,6 +127,21 @@ def get_medline_id_of_disease(disease_id):
     results = sparql.query().convert()["results"]["bindings"]
     if len(results) > 0:
         return results[0]["medlineId"]["value"]
+    else:
+        return None
+
+def get_wikiPageID_of_disease(disease_id):
+    sparql = SPARQLWrapper("https://dbpedia.org/sparql")
+    sparql.setQuery(f"""
+                SELECT ?wikiPageID
+                WHERE {{
+                    {disease_id.replace("http://dbpedia.org/resource/", "dbr:")} dbo:wikiPageID ?wikiPageID.
+                }}
+            """)
+    sparql.setReturnFormat(JSON)
+    results = sparql.query().convert()["results"]["bindings"]
+    if len(results) > 0:
+        return int(results[0]["wikiPageID"]["value"])
     else:
         return None
 
