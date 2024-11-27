@@ -28,7 +28,15 @@ def get_diseases_for_symptoms(symptoms_list):
     # Configure and execute the query
     sparql.setQuery(query)
     sparql.setReturnFormat(JSON)
-    results = sparql.query().convert()["results"]["bindings"]
+    results = None
+    for attempt in range(3):
+        try:
+            results = sparql.query().convert()["results"]["bindings"]
+            break
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed: {e}")
+            if attempt == 2:
+                raise
 
     if not results:
         print("No results found for the given symptoms")

@@ -1,5 +1,9 @@
+from typing import List, Dict
+
 import pandas as pd  # Bibliothek zur Datenanalyse (z. B. für das Arbeiten mit DataFrames)
 import streamlit as st  # Streamlit für die Erstellung von Webanwendungen.
+from langchain_core.prompts import PromptTemplate
+from langchain_ollama import OllamaLLM
 
 # Import von benutzerdefinierten Funktionen
 from backend.dbpedia_handler import *  # Funktionen für DBpedia-Abfragen (z. B. Symptome/Krankheiten)
@@ -7,20 +11,21 @@ from backend.medline_handler import get_article  # Funktion zum Abrufen eines Me
 from backend.Entropy import *  # Funktionen zur Berechnung der Entropie von Symptomen
 from backend.wikipedia_handler import get_symptom_text
 
-
 # Zugriff auf den Session-Status, um Daten während der Interaktion zu speichern.
 s_state = st.session_state
 
 # Setzt den Titel der Streamlit-Anwendung.
 st.title("Healthcare")
 
-if st.button("New Query"):
+col1, col2 = st.columns(2)
+
+if col1.button("New Query"):
     for key in st.session_state.keys():
         del st.session_state[key]
     s_state.status = "User Input"
     st.rerun()
 
-
+col2.checkbox("LLM Active", key="llm_active")
 
 # Initialisierung des Status, falls dieser noch nicht existiert.
 if "status" not in s_state:
@@ -36,11 +41,9 @@ if s_state.status == "User Input":
     if "symptom_dict" not in s_state:
         s_state.symptom_dict = get_all_symptoms()
 
-
     # Abrufen aller möglichen Symptome, die noch nicht hinzugefügt wurden.
     s_state.symptom_dict_pos = get_all_possible_symptoms(
         [s_state.symptom_dict[symptom] for symptom in s_state.symptom_list])
-
 
     # Trennlinie in der Benutzeroberfläche
     st.divider()
@@ -151,40 +154,162 @@ if s_state.status == "Plausibility Check":
 
     # Abrufen der möglichen Krankheiten basierend auf den eingegebenen Symptomen.
 
-
     # Abrufen des Wikipedia Signs and Symptoms Kapitels.
     current_disease = list(s_state.possible_diseases.values())[s_state.current_index]
 
-    with st.container(border=True):
-        st.write("Does the following list of symptoms match your condition?")
-        if st.button("Yes"):
-            s_state.disease_decision[list(s_state.possible_diseases.keys())[s_state.current_index]] = True
-            if s_state.current_index == len(s_state.disease_list) - 1:
-                s_state.status = "Display Results"
-            else:
-                s_state.current_index += 1
-            st.rerun()
-        if st.button("No"):
-            s_state.disease_decision[list(s_state.possible_diseases.keys())[s_state.current_index]] = False
-            if s_state.current_index == len(s_state.disease_list) - 1:
-                s_state.status = "Display Results"
-            else:
-                s_state.current_index += 1
-            st.rerun()
+    if "disease_name" not in s_state or "symptom_text" not in s_state or "wiki_page_id" not in s_state:
+        s_state.wiki_page_id = get_wikiPageID_of_disease(current_disease)
+        print(f"wikiPageID: {s_state['wiki_page_id']}")
+        s_state.disease_name, s_state.symptom_text = get_symptom_text(s_state["wiki_page_id"])
 
-    wikiPageID = get_wikiPageID_of_disease(current_disease)
-    print(f"wikiPageID: {wikiPageID}")
-    symptom_text = get_symptom_text(wikiPageID)
+    if s_state.get("llm_active", False):
+        def format_chat_history(history: List[Dict]) -> str:
+            if not history:
+                return "No previous questions."
+            return "\n".join([f"Q: {h['question']}\nA: {h['answer']}" for h in history])
 
-    print(symptom_text)
 
-    if "An error occurred" not in symptom_text:  # Wenn eine Medline-ID gefunden wurde, Artikel und Symptome anzeigen.
-        st.write(f"Possible Disease: {list(s_state.possible_diseases.keys())[s_state.current_index]}")
-        st.markdown(symptom_text)  # Anzeige der Symptome im Artikel.
+        if "llm" not in s_state:
+            s_state.llm = OllamaLLM(model="llama3.2:3b")
+
+        if "chat_history" not in s_state:
+            s_state.chat_history = []
+
+        if "awaiting_answer" not in s_state:
+            s_state.awaiting_answer = False
+
+        if "question" not in s_state:
+            s_state.question = ""
+
+        # Modern prompt template using ChatPromptTemplate
+        question_template = """Generate a single, clear yes/no question to further assess whether the patient has a specific 
+        condition. Focus on creating the most relevant question based on the provided symptom description and chat 
+        history. If you are finished with your assessment output "END".
+
+            Disease Name: {disease_name}
+            Already known Symptoms: {known_symptoms}
+            Already excluded Symptoms: {excluded_symptoms}
+            Symptom Description: {symptom_text}  
+            Chat History (Previous Questions and Answers): {chat_history}  
+
+            If you provide a question, your question should:  
+            1. Be directly related to the symptom description.  
+            2. Build logically on the chat history.  
+            3. Avoid open-ended or explanatory statements.  
+
+            Output:  
+
+            """
+
+        question_prompt_template = PromptTemplate(
+            input_variables=["disease_name", "known_symptoms", "excluded_symptoms", "symptom_text", "chat_history"],
+            template=question_template
+        )
+
+        with st.expander("Chat History"):
+            st.write(s_state.chat_history)
+
+        if len(s_state.chat_history) < 3:  # Added maximum questions limit
+            try:
+                if not s_state.awaiting_answer:
+                    print("Invoke LLM")
+                    s_state.question = s_state["llm"].stream(question_prompt_template.format(
+                        disease_name=s_state["disease_name"],
+                        known_symptoms=", ".join(s_state.symptom_list),
+                        excluded_symptoms=", ".join(s_state.no_symptom_list),
+                        symptom_text=s_state["symptom_text"],
+                        chat_history=format_chat_history(s_state["chat_history"])
+                    ))
+
+                    s_state.awaiting_answer = True
+
+                with st.container(border=True):
+                    st.write_stream(s_state["question"])
+                    col1, col2, col3 = st.columns(3)
+                    if col1.button("Yes"):
+                        s_state["chat_history"].append({
+                            "question": s_state["question"],
+                            "answer": "yes"
+                        })
+                        s_state.awaiting_answer = False
+                        st.rerun()
+                    if col2.button("No"):
+                        s_state["chat_history"].append({
+                            "question": s_state["question"],
+                            "answer": "no"
+                        })
+                        s_state.awaiting_answer = False
+                        st.rerun()
+                    if col3.button("I don't know"):
+                        s_state["chat_history"].append({
+                            "question": s_state["question"],
+                            "answer": "I don't know"
+                        })
+                        s_state.awaiting_answer = False
+                        st.rerun()
+
+
+
+            except IndexError as e:
+                print(f"\nError during diagnosis: {str(e)}")
+
+        else:
+            # Modern prompt template using ChatPromptTemplate
+            assessment_template = """Based on the name of the disease, the symptom description and the chat history, please give an assessment, if the diagnosis is plausible and how critical the disease state is.
+    
+                Disease Name: {disease_name}
+                Already known Symptoms: {known_symptoms}
+                Already excluded Symptoms: {excluded_symptoms}
+                Symptom Description: {symptom_text}  
+                Chat History (Previous Questions and Answers): {chat_history}   
+    
+                Possible Disease States:
+                1. Critical, Call an Ambulanz
+                2. Critical, Visit the local hospital
+                3. Non-Critical, Visit a doctor
+                4. Non-Critical, Monitor the symptoms
+    
+                Output:  
+    
+                """
+
+            assessment_prompt_template = PromptTemplate(
+                input_variables=["disease_name", "known_symptoms", "excluded_symptoms", "symptom_text", "chat_history"],
+                template=assessment_template
+            )
+
+            st.write_stream(s_state["llm"].stream(assessment_prompt_template.format(
+                disease_name=s_state["disease_name"],
+                known_symptoms=", ".join(s_state.symptom_list),
+                excluded_symptoms=", ".join(s_state.no_symptom_list),
+                symptom_text=s_state["symptom_text"],
+                chat_history=format_chat_history(s_state["chat_history"])
+            )))
     else:
-        # Wenn keine Medline-ID gefunden wird, wird die Krankheit ohne Medline-ID angezeigt.
-        st.write(f"Possible Disease: {list(s_state.possible_diseases.keys())[s_state.current_index]}")
-        st.write("Unfortunately no symptoms were found in Wikipedia")
+        with st.container(border=True):
+            st.write("Does the following list of symptoms match your condition?")
+            if st.button("Yes"):
+                s_state.disease_decision[list(s_state.possible_diseases.keys())[s_state.current_index]] = True
+                if s_state.current_index == len(s_state.disease_list) - 1:
+                    s_state.status = "Display Results"
+                else:
+                    s_state.current_index += 1
+                st.rerun()
+            if st.button("No"):
+                s_state.disease_decision[list(s_state.possible_diseases.keys())[s_state.current_index]] = False
+                if s_state.current_index == len(s_state.disease_list) - 1:
+                    s_state.status = "Display Results"
+                else:
+                    s_state.current_index += 1
+                st.rerun()
+
+        if "An error occurred" not in s_state["symptom_text"]:  # Wenn eine Medline-ID gefunden wurde, Artikel und Symptome anzeigen.
+            st.write(f"Possible Disease: {list(s_state.possible_diseases.keys())[s_state.current_index]}")
+            st.markdown(s_state["symptom_text"])  # Anzeige der Symptome im Artikel.
+        else:
+            # Wenn keine Medline-ID gefunden wird, wird die Krankheit ohne Medline-ID angezeigt.
+            st.write(f"Possible Disease: {list(s_state.possible_diseases.keys())[s_state.current_index]}")
+            st.write("Unfortunately no symptoms were found in Wikipedia")
 
 if s_state.status == "Display Results":
     st.divider()

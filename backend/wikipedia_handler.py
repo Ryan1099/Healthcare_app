@@ -29,10 +29,10 @@ def get_symptom_text(wikiPageId):
             section = page.section_by_title(section_title)
             if section:
                 break
-        return get_text(section)
+        return temp.title, get_text(section)
     except Exception as e:
         print(f"An error occurred: {e}")
-        return f"An error occurred: {e}"
+        return "ERROR", f"An error occurred: {e}"
 
 
 def plausibility_check(wiki_page_id: int):
@@ -41,44 +41,49 @@ def plausibility_check(wiki_page_id: int):
             return "No previous questions."
         return "\n".join([f"Q: {h['question']}\nA: {h['answer']}" for h in history])
 
-    symptom_text = get_symptom_text(wiki_page_id)
+    disease_name, symptom_text = get_symptom_text(wiki_page_id)
 
     # Initialize the LLM with modern configuration
     llm = OllamaLLM(model="gemma2:27b")
 
     # Modern prompt template using ChatPromptTemplate
-    template = """
-        Generate a single, clear yes/no question to further assess whether the patient has a specific condition. Focus on creating the most relevant question based on the provided symptom description and chat history.  
+    question_template = """Generate a single, clear yes/no question to further assess whether the patient has a specific 
+    condition. Focus on creating the most relevant question based on the provided symptom description and chat 
+    history. If you are finished with your assessment output "END".
 
+        Disease Name: {disease_name}
         Symptom Description: {symptom_text}  
         Chat History (Previous Questions and Answers): {chat_history}  
         
-        Your question should:  
+        If you provide a question, your question should:  
         1. Be directly related to the symptom description.  
         2. Build logically on the chat history.  
         3. Avoid open-ended or explanatory statements.  
         
-        Output only the question:  
+        Output:  
 
         """
 
-    prompt_template = PromptTemplate(
-        input_variables=["symptom_text", "chat_history"],
-        template=template
+    question_prompt_template = PromptTemplate(
+        input_variables=["disease_name", "symptom_text", "chat_history"],
+        template=question_template
     )
 
     diagnosis_determined = False
     chat_history = []
 
-    while not diagnosis_determined and len(chat_history) < 5:  # Added maximum questions limit
+    while not diagnosis_determined and len(chat_history) < 8:  # Added maximum questions limit
         try:
             # Invoke chain with modern syntax
-            question = llm.invoke(prompt_template.format(
+            question = llm.invoke(question_prompt_template.format(
+                disease_name=disease_name,
                 symptom_text=symptom_text,
                 chat_history=format_chat_history(chat_history)
             ))
+            if question == "END":
+                break
 
-            print("\nDiagnostic Question:", question)
+            print(question)
             user_response = input("Answer (yes/no): ").strip().lower()
 
             chat_history.append({
@@ -90,8 +95,33 @@ def plausibility_check(wiki_page_id: int):
             print(f"\nError during diagnosis: {str(e)}")
             break
 
-    return chat_history
+    # Modern prompt template using ChatPromptTemplate
+    assessment_template = """Based on the name of the disease, the symptom description and the chat history, please give an assessment, if the diagnosis is plausible and how critical the disease state is.
+
+        Symptom Description: {symptom_text}  
+        Chat History (Previous Questions and Answers): {chat_history}  
+
+        Possible Disease States:
+        1. Critical, Call an Ambulanz
+        2. Critical, Visit the local hospital
+        3. Non-Critical, Visit a doctor
+        4. Non-Critical, Monitor the symptoms
+        
+        Output:  
+
+        """
+
+    assessment_prompt_template = PromptTemplate(
+        input_variables=["symptom_text", "chat_history"],
+        template=assessment_template
+    )
+
+    return llm.invoke(assessment_prompt_template.format(
+                disease_name=disease_name,
+                symptom_text=symptom_text,
+                chat_history=format_chat_history(chat_history)
+            ))
 
 
 if __name__ == "__main__":
-    plausibility_check(63531)
+    print(plausibility_check(19572217))
