@@ -213,7 +213,7 @@ if s_state.status == "Plausibility Check":
             try:
                 if not s_state.awaiting_answer:
                     print("Invoke LLM")
-                    s_state.question = s_state["llm"].stream(question_prompt_template.format(
+                    s_state.question = s_state["llm"].invoke(question_prompt_template.format(
                         disease_name=s_state["disease_name"],
                         known_symptoms=", ".join(s_state.symptom_list),
                         excluded_symptoms=", ".join(s_state.no_symptom_list),
@@ -224,7 +224,7 @@ if s_state.status == "Plausibility Check":
                     s_state.awaiting_answer = True
 
                 with st.container(border=True):
-                    st.write_stream(s_state["question"])
+                    st.write(s_state["question"])
                     col1, col2, col3 = st.columns(3)
                     if col1.button("Yes"):
                         s_state["chat_history"].append({
