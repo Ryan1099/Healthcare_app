@@ -1,4 +1,6 @@
 import math
+import time
+
 from SPARQLWrapper import SPARQLWrapper, JSON
 
 def get_diseases_for_symptoms(symptoms_list):
@@ -15,7 +17,7 @@ def get_diseases_for_symptoms(symptoms_list):
     sparql = SPARQLWrapper("https://dbpedia.org/sparql")
 
     # Create conditions for the symptoms in the SPARQL query
-    symptom_conditions = "\n".join([f"?disease dbo:symptom+ {symptom} ." for symptom in symptoms_list])
+    symptom_conditions = "\n".join([f"?disease dbo:symptom+ <{symptom}> ." for symptom in symptoms_list])
 
     # SPARQL query to find diseases based on the symptoms
     query = f"""
@@ -46,7 +48,7 @@ def get_diseases_for_symptoms(symptoms_list):
     diseases = []
     for result in results:
         if "disease" in result:
-            disease_value = result["disease"]["value"].replace("http://dbpedia.org/resource/", "dbr:")
+            disease_value = result["disease"]["value"]
             diseases.append(disease_value)
         else:
             print("No 'disease' key found in result:", result)
@@ -69,7 +71,7 @@ def get_disease_symptom_pairs(disease_list):
     sparql = SPARQLWrapper("https://dbpedia.org/sparql")
 
     # Create conditions for the diseases in the SPARQL query
-    disease_conditions = " ".join([f"<http://dbpedia.org/resource/{disease.split(':')[1]}>" for disease in disease_list])
+    disease_conditions = " ".join([f"<{disease}>" for disease in disease_list])
 
     # SPARQL query to find diseases and their symptoms
     query = f"""
@@ -82,16 +84,26 @@ def get_disease_symptom_pairs(disease_list):
     }}
     """
 
-    # Configure and execute the query
     sparql.setQuery(query)
     sparql.setReturnFormat(JSON)
-    results = sparql.query().convert()["results"]["bindings"]
+
+    results = None
+
+    for attempt in range(3):
+        try:
+            results = sparql.query().convert()["results"]["bindings"]
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed for entropy query: {e}")
+            time.sleep(1)  # Add a small delay between retry attempts
+
+    if results is None:
+        raise Exception("Failed to execute query after 3 attempts")
 
     # Extract diseases and symptoms into a dictionary
     disease_symptom_pairs = {}
     for result in results:
         disease_label = result["label"]["value"]  # Disease as a readable label
-        symptom = result["symptom"]["value"].replace("http://dbpedia.org/resource/", "dbr:")  # Symptom in "dbr:" format
+        symptom = result["symptom"]["value"]  # Symptom in "dbr:" format
 
         if disease_label not in disease_symptom_pairs:
             disease_symptom_pairs[disease_label] = []

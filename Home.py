@@ -15,7 +15,7 @@ from backend.wikipedia_handler import get_symptom_text
 s_state = st.session_state
 
 # Setzt den Titel der Streamlit-Anwendung.
-st.title("Healthcare")
+st.image("img/logo.png", width=150)
 
 col1, col2 = st.columns(2)
 
@@ -115,7 +115,7 @@ if s_state.status == "Symptom Questions":
                                                          s_state.no_symptom_list])
 
     # Überprüfung, ob es noch Symptome gibt, die abgefragt werden müssen.
-    if count_distinct_diseases > 1:
+    if count_distinct_diseases > 1 and (count_distinct_diseases > 5 or len(s_state.no_symptom_list) < 5):
         symptom_with_highest_entropy = sorted_filtered_entropy_values[0]
         symptom = next(key for key, value in s_state.symptom_dict.items() if value == symptom_with_highest_entropy[0])
 
@@ -155,12 +155,10 @@ if s_state.status == "Plausibility Check":
     # Abrufen der möglichen Krankheiten basierend auf den eingegebenen Symptomen.
 
     # Abrufen des Wikipedia Signs and Symptoms Kapitels.
-    current_disease = list(s_state.possible_diseases.values())[s_state.current_index]
 
-    if "disease_name" not in s_state or "symptom_text" not in s_state or "wiki_page_id" not in s_state:
-        s_state.wiki_page_id = get_wikiPageID_of_disease(current_disease)
-        print(f"wikiPageID: {s_state['wiki_page_id']}")
-        s_state.disease_name, s_state.symptom_text = get_symptom_text(s_state["wiki_page_id"])
+    if "disease_symptom_texts" not in s_state or "wiki_page_ids" not in s_state:
+        s_state.wiki_page_ids = [get_wikiPageID_of_disease(x) for x in list(s_state.possible_diseases.values())]
+        s_state.disease_symptom_texts = [get_symptom_text(x) for x in s_state.wiki_page_ids]
 
     if s_state.get("llm_active", False):
         def format_chat_history(history: List[Dict]) -> str:
@@ -170,7 +168,7 @@ if s_state.status == "Plausibility Check":
 
 
         if "llm" not in s_state:
-            s_state.llm = OllamaLLM(model="llama3.2:3b")
+            s_state.llm = OllamaLLM(model="gemma2:27b")
 
         if "chat_history" not in s_state:
             s_state.chat_history = []
@@ -186,10 +184,10 @@ if s_state.status == "Plausibility Check":
         condition. Focus on creating the most relevant question based on the provided symptom description and chat 
         history. If you are finished with your assessment output "END".
 
-            Disease Name: {disease_name}
+            
             Already known Symptoms: {known_symptoms}
             Already excluded Symptoms: {excluded_symptoms}
-            Symptom Description: {symptom_text}  
+            Disease Symptom Descriptions: {disease_symptom_description}
             Chat History (Previous Questions and Answers): {chat_history}  
 
             If you provide a question, your question should:  
@@ -202,22 +200,21 @@ if s_state.status == "Plausibility Check":
             """
 
         question_prompt_template = PromptTemplate(
-            input_variables=["disease_name", "known_symptoms", "excluded_symptoms", "symptom_text", "chat_history"],
+            input_variables=["known_symptoms", "excluded_symptoms", "disease_symptom_texts", "chat_history"],
             template=question_template
         )
 
         with st.expander("Chat History"):
             st.write(s_state.chat_history)
 
-        if len(s_state.chat_history) < 3:  # Added maximum questions limit
+        if len(s_state.chat_history) < 5:  # Added maximum questions limit
             try:
                 if not s_state.awaiting_answer:
                     print("Invoke LLM")
                     s_state.question = s_state["llm"].invoke(question_prompt_template.format(
-                        disease_name=s_state["disease_name"],
+                        disease_symptom_description=s_state["disease_symptom_texts"],
                         known_symptoms=", ".join(s_state.symptom_list),
                         excluded_symptoms=", ".join(s_state.no_symptom_list),
-                        symptom_text=s_state["symptom_text"],
                         chat_history=format_chat_history(s_state["chat_history"])
                     ))
 
@@ -255,13 +252,14 @@ if s_state.status == "Plausibility Check":
 
         else:
             # Modern prompt template using ChatPromptTemplate
-            assessment_template = """Based on the name of the disease, the symptom description and the chat history, please give an assessment, if the diagnosis is plausible and how critical the disease state is.
+            assessment_template = """Based on the possible of the disease symptom description and the chat history, please give an assessment, which diagnosis is plausible and how critical the disease state is.
+            
+                Please start your output with: Possible Diagnosis: <insert disease name>
     
-                Disease Name: {disease_name}
                 Already known Symptoms: {known_symptoms}
                 Already excluded Symptoms: {excluded_symptoms}
-                Symptom Description: {symptom_text}  
-                Chat History (Previous Questions and Answers): {chat_history}   
+                Disease Symptom Descriptions: {disease_symptom_description}
+                Chat History (Previous Questions and Answers): {chat_history}  
     
                 Possible Disease States:
                 1. Critical, Call an Ambulanz
@@ -274,15 +272,14 @@ if s_state.status == "Plausibility Check":
                 """
 
             assessment_prompt_template = PromptTemplate(
-                input_variables=["disease_name", "known_symptoms", "excluded_symptoms", "symptom_text", "chat_history"],
+                input_variables=["known_symptoms", "excluded_symptoms", "disease_symptom_texts", "chat_history"],
                 template=assessment_template
             )
 
             st.write_stream(s_state["llm"].stream(assessment_prompt_template.format(
-                disease_name=s_state["disease_name"],
+                disease_symptom_description=s_state["disease_symptom_texts"],
                 known_symptoms=", ".join(s_state.symptom_list),
                 excluded_symptoms=", ".join(s_state.no_symptom_list),
-                symptom_text=s_state["symptom_text"],
                 chat_history=format_chat_history(s_state["chat_history"])
             )))
     else:
@@ -303,9 +300,9 @@ if s_state.status == "Plausibility Check":
                     s_state.current_index += 1
                 st.rerun()
 
-        if "An error occurred" not in s_state["symptom_text"]:  # Wenn eine Medline-ID gefunden wurde, Artikel und Symptome anzeigen.
+        if "An error occurred" not in s_state["disease_symptom_texts"][s_state.current_index][1]:  # Wenn eine Medline-ID gefunden wurde, Artikel und Symptome anzeigen.
             st.write(f"Possible Disease: {list(s_state.possible_diseases.keys())[s_state.current_index]}")
-            st.markdown(s_state["symptom_text"])  # Anzeige der Symptome im Artikel.
+            st.markdown(s_state["disease_symptom_texts"][s_state.current_index][1])  # Anzeige der Symptome im Artikel.
         else:
             # Wenn keine Medline-ID gefunden wird, wird die Krankheit ohne Medline-ID angezeigt.
             st.write(f"Possible Disease: {list(s_state.possible_diseases.keys())[s_state.current_index]}")

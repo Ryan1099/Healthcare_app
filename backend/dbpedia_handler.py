@@ -31,7 +31,7 @@ def get_all_symptoms():
     try:
         results = query_dbpedia(sparql, query, "all symptoms")
         label_resource_dict = {
-            x["label"]["value"]: x["symptom"]["value"].replace("http://dbpedia.org/resource/", "dbr:")
+            x["label"]["value"]: x["symptom"]["value"]
             for x in results}
         return {k: v for k, v in sorted(label_resource_dict.items(), key=lambda x: x[1])}
     except Exception as e:
@@ -68,7 +68,7 @@ def get_all_possible_symptoms(input_symptoms):
                     WHERE {{
                         ?disease dbo:symptom ?inputSymptom.
                         VALUES ?inputSymptom {{
-                            {" ".join(f"{symptom}" for symptom in input_symptoms)}
+                            {" ".join(f"<{symptom}>" for symptom in input_symptoms)}
                         }}
                     }}
                     GROUP BY ?disease
@@ -86,7 +86,7 @@ def get_all_possible_symptoms(input_symptoms):
         results = query_dbpedia(sparql, query, "possible symptoms")
 
         # Create a dictionary of symptoms excluding the input symptoms
-        symptom_dict = {x["label"]["value"]: x["symptom"]["value"].replace("http://dbpedia.org/resource/", "dbr:")
+        symptom_dict = {x["label"]["value"]: x["symptom"]["value"]
                         for x in results}
 
         # Exclude input symptoms from the result
@@ -100,7 +100,7 @@ def get_all_possible_symptoms(input_symptoms):
 
 
 def get_diseases_by_symptoms(symptom_list):
-    symptom_triples = "\n".join([f"?disease dbo:symptom+ {x}." for x in symptom_list])
+    symptom_triples = "\n".join([f"?disease dbo:symptom+ <{x}>." for x in symptom_list])
 
     sparql = SPARQLWrapper("https://dbpedia.org/sparql")
     query = f"""
@@ -121,12 +121,12 @@ def get_diseases_by_symptoms(symptom_list):
         return {}
 
 
-def get_symptoms_of_disease(disease_id, symptom_label_list, no_symptom_label_list):
+def get_symptoms_of_disease(disease_uri, symptom_label_list, no_symptom_label_list):
     sparql = SPARQLWrapper("https://dbpedia.org/sparql")
     query = f"""
         SELECT DISTINCT ?symptom ?label
         WHERE {{
-            {disease_id.replace("http://dbpedia.org/resource/", "dbr:")} dbo:symptom+ ?symptom.
+            <{disease_uri}> dbo:symptom+ ?symptom.
             ?symptom rdfs:label ?label.
             filter langMatches(lang(?label), "en")
         }}
@@ -135,7 +135,7 @@ def get_symptoms_of_disease(disease_id, symptom_label_list, no_symptom_label_lis
     try:
         results = query_dbpedia(sparql, query, "symptoms of disease")
         label_resource_dict = {
-            x["label"]["value"]: x["symptom"]["value"].replace("http://dbpedia.org/resource/", "dbr:")
+            x["label"]["value"]: x["symptom"]["value"]
             for x in results}
         return {k: v for k, v in sorted(label_resource_dict.items(), key=lambda x: x[1]) if
                 k not in symptom_label_list + no_symptom_label_list}
@@ -144,12 +144,12 @@ def get_symptoms_of_disease(disease_id, symptom_label_list, no_symptom_label_lis
         return {}
 
 
-def get_medline_id_of_disease(disease_id):
+def get_medline_id_of_disease(disease_uri):
     sparql = SPARQLWrapper("https://dbpedia.org/sparql")
     query = f"""
         SELECT ?medlineId
         WHERE {{
-            {disease_id.replace("http://dbpedia.org/resource/", "dbr:")} dbo:medlinePlus ?medlineId.
+            <{disease_uri}> dbo:medlinePlus ?medlineId.
         }}
     """
 
@@ -161,12 +161,12 @@ def get_medline_id_of_disease(disease_id):
         return None
 
 
-def get_wikiPageID_of_disease(disease_id):
+def get_wikiPageID_of_disease(disease_uri):
     sparql = SPARQLWrapper("https://dbpedia.org/sparql")
     query = f"""
         SELECT ?wikiPageID
         WHERE {{
-            {disease_id.replace("http://dbpedia.org/resource/", "dbr:")} dbo:wikiPageID ?wikiPageID.
+            <{disease_uri}> dbo:wikiPageID ?wikiPageID.
         }}
     """
 
